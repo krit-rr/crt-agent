@@ -27,8 +27,34 @@ Rules:
 - Do not pre-solve. `small = 0.05` is a violation; `big + small = 1.10` is correct.
 - If the prose implies a relationship you had to interpret, record it in assumptions.
 
+GROUNDING THE NUMBERS  (this is where formalisations usually fail)
+- Every number stated in the problem must appear as a literal in your equations.
+  If the prose says "12 per day", write `12`, not an unbound variable `seen_per_day`.
+  Naming a quantity you never bind to a value leaves the system under-determined and
+  the solver will reject it.
+- The system must pin down the queried variable to a single number. Before you
+  finish, check: could a solver derive one value for it from these equations alone?
+- If the problem is about proportions of a whole that is never given a size, fix the
+  whole at 1. "covers the entire lake" becomes `= 1`, not `= total_area`.
+
 An external symbolic solver computes the answer from your equations. If your model is
 wrong, the answer will be wrong, and that is the signal we want."""
+
+REPAIR_SYSTEM = (
+    FORMALISE_SYSTEM
+    + """
+
+You are being shown a formalisation you produced that the solver rejected, and the
+error it gave. Produce a corrected formalisation of the SAME problem.
+
+The error is almost always one of:
+- a declared variable that never gets a numeric value (bind it to the literal from
+  the prose, or drop it),
+- an unknown that no equation constrains (add the missing relationship),
+- a quantity treated as symbolic when the problem states it outright.
+
+Do not change what the problem is asking. Fix the algebra."""
+)
 
 INTUIT_SYSTEM = """Answer with the very first number that comes to mind.
 
@@ -50,14 +76,23 @@ def intuit_node(provider: LLMProvider) -> Any:
             temperature=1.0,
         )
         value = float(response.arguments["value"])
+        reliable = bool(getattr(provider, "supports_unreflective_sampling", True))
         state["intuitive_value"] = value
+        state["intuitive_reliable"] = reliable
         state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
         state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
+        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
+        note = str(response.arguments.get("gut_feel", ""))[:200]
+        if not reliable:
+            note = (
+                f"{note}  [NOT a System 1 sample: {provider.name} deliberates before "
+                "replying, so this is a second considered answer]"
+            ).strip()
         state["trace"].add(
             StepKind.INTUIT,
             "intuit",
-            rationale=str(response.arguments.get("gut_feel", ""))[:200],
-            payload={"value": value},
+            rationale=note,
+            payload={"value": value, "unreflective": reliable},
             started=t0,
         )
         return state
@@ -77,6 +112,7 @@ def parse_node(provider: LLMProvider) -> Any:
         )
         state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
         state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
+        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
 
         try:
             spec = response.as_spec()
@@ -162,3 +198,81 @@ def verify_node(state: AgentState) -> AgentState:
         state["abstained"] = True
         state["value"] = None
     return state
+
+
+def repair_node(provider: LLMProvider) -> Any:
+    """Re-formalise after the solver rejected the spec.
+
+    This is the only place in the system where a model gets to see feedback and try
+    again, and it is deliberately narrow: it sees its own equations and the solver's
+    complaint, nothing else. It never sees the expected answer, so it cannot converge
+    on a number by trial and error — only on a *well-formed system*.
+
+    That distinction is what keeps the repair loop honest. A loop that retried until
+    the answer matched would be fitting to the label; this one retries until the
+    algebra is solvable, and the algebra is then right or wrong on its own merits.
+
+    Observed failure it exists to fix: models routinely declare `seen_per_day` as a
+    symbol and never bind it to the 12 stated in the prose, leaving an under-determined
+    system. The solver catches it; this gives the model one chance to hear that.
+    """
+
+    def run(state: AgentState) -> AgentState:
+        if state.get("repairs", 0) >= state.get("max_repairs", 0):
+            return state
+
+        t0 = time.perf_counter()
+        state["repairs"] = state.get("repairs", 0) + 1
+        previous = state.get("spec")
+        complaint = state.get("error") or "the solver rejected the system"
+
+        prompt = (
+            f"PROBLEM\n{state['question']}\n\n"
+            f"YOUR FORMALISATION\n"
+            f"variables: {[v.name for v in previous.variables] if previous else []}\n"
+            f"equations: {previous.equations if previous else []}\n"
+            f"query: {previous.query if previous else '?'}\n\n"
+            f"SOLVER ERROR\n{complaint}"
+        )
+
+        response = provider.call(system=REPAIR_SYSTEM, prompt=prompt, tool=FORMALISE_TOOL)
+        state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
+        state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
+        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
+
+        try:
+            spec = response.as_spec()
+        except ValidationError as exc:
+            state["trace"].add(
+                StepKind.REPAIR,
+                "repair",
+                rationale=f"repair produced an invalid spec: {exc.error_count()} violation(s)",
+                started=t0,
+            )
+            return state  # stays abstained
+
+        # Clear the failure so solve_node will run again.
+        state["spec"] = spec
+        state["abstained"] = False
+        state["error"] = None
+        state["solver"] = None
+        state["trace"].add(
+            StepKind.REPAIR,
+            "repair",
+            rationale=f"re-formalised after: {complaint}",
+            payload={"attempt": state["repairs"], "previous_error": complaint},
+            started=t0,
+        )
+        state["trace"].add(
+            StepKind.PARSE,
+            "repair",
+            rationale="; ".join(spec.equations) + f"  ->  solve for {spec.query}",
+            payload={
+                "spec": spec.model_dump(),
+                "spec_fingerprint": spec_fingerprint(spec),
+                "repaired": True,
+            },
+        )
+        return state
+
+    return run

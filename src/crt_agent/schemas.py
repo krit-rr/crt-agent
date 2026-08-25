@@ -116,6 +116,7 @@ class StepKind(StrEnum):
     SOLVE = "solve"  # ProblemSpec -> SolverResult (deterministic)
     VERIFY = "verify"  # back-substitution check
     RECONCILE = "reconcile"  # System 1 vs System 2 comparison
+    REPAIR = "repair"  # re-formalise after the solver rejected the first attempt
     MATCH = "match"  # rule-based template match (symbolic agent)
     DIRECT = "direct"  # ungrounded LLM answer (ablation control only)
     ABSTAIN = "abstain"  # agent declined to answer
@@ -233,7 +234,16 @@ class Answer(BaseModel):
     intuitive_value: float | None = Field(
         default=None, description="System 1 answer, when the agent produces one separately"
     )
+    intuitive_reliable: bool = Field(
+        default=True,
+        description=(
+            "False when the backend cannot sample unreflectively, so `intuitive_value` "
+            "is a second deliberate answer and must not be scored as System 1"
+        ),
+    )
     conflict_detected: bool = False
     latency_ms: float = 0.0
     tokens_in: int = 0
     tokens_out: int = 0
+    #: Real spend, when the backend reports it. Zero means "not reported", not "free".
+    cost_usd: float = 0.0

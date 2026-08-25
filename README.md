@@ -40,7 +40,45 @@ crt ask "A racket and a shuttlecock cost \$4.20 in total. The racket costs \$4.0
 
 With no `ANTHROPIC_API_KEY` set, everything runs against a deterministic mock provider,
 so the graphs, tracing, auditing, metrics and storage are all exercised without a
-network call. Set the key in `.env` to run the real thing.
+network call.
+
+## Running it against a real model without an API key
+
+`LLM_PROVIDER=claude-cli` drives Claude through `claude -p`, billed to a Pro/Max
+subscription rather than a key. Install Claude Code, run `claude login`, then:
+
+```bash
+LLM_PROVIDER=claude-cli crt bench --model haiku --concurrency 8 --max-cost 5.00
+LLM_PROVIDER=claude-cli crt bench --model haiku --model sonnet --concurrency 8   # matrix
+```
+
+Three things about this backend are different enough that they are enforced in code
+rather than mentioned in passing:
+
+**It has no forced tool use.** `claude -p` is an agent harness, not the Messages API,
+so `tool_choice` doesn't exist. The tool's `input_schema` is compiled into the system
+prompt as a JSON contract and the reply is validated by the same Pydantic model. The
+architectural guarantee is untouched — only `variables`, `equations` and `query` are
+ever read, so the model still cannot state an answer. What degrades is reliability:
+malformed replies become abstentions.
+
+**It cannot sample an unreflective answer.** The harness reasons before replying at
+every effort level; at `--effort low` Haiku still spent 753 thinking tokens on the
+bat-and-ball item and returned $0.05 rather than the $0.10 lure. A deliberated "snap
+judgement" is not a System 1 measurement, so the provider declares
+`supports_unreflective_sampling = False` and the `S1 lure` and `override` columns print
+`n/a`. Withholding a number you did not measure is the whole point.
+
+**Cost is harness overhead, and sessions are deliberately not reused.** Every call
+re-sends Claude Code's ~30k-token system prompt: ~$0.06 cold, ~$0.006-0.02 once the
+prompt cache warms. Reusing one session would amortise that several-fold and is
+forbidden here — item N+1 would see item N, and item independence is the premise of the
+benchmark. Measured: **$0.70 for a 48-call sweep** on Haiku, so a full 264-call sweep is
+roughly $3.50, comfortably inside a Max plan's Agent SDK credit. `--max-cost` is a hard
+ceiling; `--concurrency 8` takes a full sweep from over an hour to minutes.
+
+For reference, the same sweep on the raw API is about $0.90. The subscription route
+costs ~4x more per sweep and saves you setting up billing.
 
 ---
 
@@ -84,14 +122,74 @@ Same model, no equations, no derivation, and the answer is the lure: $4.20 − $
 
 ---
 
+## First real result, and what it says
+
+A 48-call sweep on Haiku 4.5 via the subscription route, August 2026:
+
+```
+agent       canonical   surface  perturbed    novel   wording   number   abstain
+symbolic       100.0%    100.0%     100.0%   100.0%      0.0%     0.0%      0.0%
+tool           100.0%    100.0%     100.0%   100.0%      0.0%     0.0%      0.0%
+dual           100.0%    100.0%     100.0%   100.0%      0.0%     0.0%      0.0%
+ablation       100.0%    100.0%     100.0%   100.0%      0.0%     0.0%      0.0%
+```
+
+**The benchmark is saturated at this model tier and the grounding delta is zero.**
+Haiku solves every CRT item unaided, so the control arm matches the grounded arms and
+the scaffolding demonstrably buys nothing here. That is the honest reading and it is
+worth stating plainly: on a 2026 frontier-family model, this benchmark has stopped
+measuring what it was built to measure.
+
+It is still a real result. It says the memorisation worry that motivated the project
+does not bite for these models — they transfer perfectly to perturbed wordings and
+perturbed numbers, with both gaps at zero, which is exactly the signature of reasoning
+rather than recall. The `symbolic` row is the sanity check: a rule-based system with no
+model in it also scores 100%, confirming the items are correctly generated.
+
+To see a non-zero grounding delta you need a model weak enough to fall for the lures.
+Claude's smallest tier is already too strong, so the subscription route cannot produce
+that number — a local 7-8B model through an OpenAI-compatible endpoint could. That
+adapter isn't built; the provider layer is a Protocol and it's ~50 lines.
+
+### The run before this one is the more interesting artifact
+
+The first live sweep scored `tool` at **83.3%**, *below* the 100% control. The failure
+digest showed why:
+
+```
+[tool] drift:novel:0  (abstain)
+  equations: ['net_daily_reduction = seen_per_day - join_per_day',
+              'initial_waitlist = net_daily_reduction * days_until_empty']
+  error: solver: 'days_until_empty' is under-determined
+```
+
+The model had written the general formula and never bound `seen_per_day` to the 12
+stated in the prose. That is a bug in the *prompt*, not the model: the formalisation
+instructions never said every stated number must appear as a literal. Two changes
+followed — an explicit grounding rule in the prompt, and the `repair` cycle that feeds
+the solver's complaint back for one retry — and the arm went to 100%.
+
+Worth noticing what made that debuggable at all: the trace recorded the exact equations
+the model committed to, and the solver refused to guess rather than returning a
+plausible number. An ungrounded arm that gets the same item wrong tells you nothing
+about why.
+
+---
+
 ## The four arms
 
 | arm | pipeline | what it's for |
 |---|---|---|
 | `symbolic` | `match → solve → verify` | Rule-based, no LLM. The floor. Abstains on any phrasing its regexes don't cover. |
-| `tool` | `parse → solve → verify` | LLM formalises under a forced tool schema, sympy computes. The main proposal. |
-| `dual` | `intuit → parse → solve → verify → reconcile` | Samples System 1 *before* deliberating, then reports the override. |
+| `tool` | `parse → solve ⇄ repair → verify` | LLM formalises under a forced tool schema, sympy computes. The main proposal. |
+| `dual` | `intuit → parse → solve ⇄ repair → verify → reconcile` | Samples System 1 *before* deliberating, then reports the override. |
 | `ablation` | `direct` | **Control.** Same model, no solver, no schema. Makes every other number mean something. |
+
+The `⇄ repair` cycle is the only feedback loop in the system. When the solver rejects a
+spec, the model gets one chance to see its own equations and the solver's complaint and
+try again. It never sees the expected answer — so it can converge on *solvable algebra*
+but not on a target number, which is the difference between a repair loop and fitting to
+the label. There is a test asserting exactly that.
 
 The three grounded arms share the identical `solve` and `verify` nodes, so any
 difference between them is attributable to the architecture rather than to the
@@ -210,6 +308,12 @@ Worth being straight about, because these are the holes an ML engineer will poke
 - **`canonical` has n = 3.** There are only three famous CRT wordings. Both gap
   columns carry wide error bars and the report says so on every run. They're
   directional, not point estimates.
+- **Current models saturate it.** Measured above: every arm at 100% on Haiku, grounding
+  delta zero. The benchmark discriminates architectures only on models weak enough to
+  fall for the lures, and the Claude family no longer is.
+- **The `dual` arm is unmeasurable through the subscription backend.** `claude -p`
+  always deliberates, so its System 1 columns are withheld rather than reported. Only
+  the raw API path can sample unreflectively.
 - **A well-formed spec of the wrong problem still passes the audit.** Grounding moves
   the failure from arithmetic into formalisation; it doesn't eliminate it. The mock
   provider deliberately does this on ~8% of items so the failure mode is visible in
@@ -280,10 +384,14 @@ a smoke test. No API key, no network, no tokens spent on any push.
 ## Commands
 
 ```bash
-crt agents                              # list the arms
-crt items --set surface -n 5            # inspect generated items and their traps
-crt ask "<question>" --agent dual       # one question, full trace
-crt bench --perturbed 20 --store -v     # sweep, persist, stream progress
+crt agents                                    # list the arms
+crt items --set surface -n 5                  # inspect generated items and their traps
+crt ask "<question>" --agent dual             # one question, full trace
+crt bench --perturbed 20 --store -v           # sweep, persist, stream progress
+
+# against a real model, no API key (Pro/Max subscription):
+LLM_PROVIDER=claude-cli crt bench --model haiku --concurrency 8 --max-cost 5.00
+LLM_PROVIDER=claude-cli crt bench --model haiku --model sonnet --concurrency 8
 ```
 
 ---

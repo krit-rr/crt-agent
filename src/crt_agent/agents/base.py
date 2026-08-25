@@ -38,6 +38,10 @@ class AgentState(TypedDict, total=False):
     error: str | None
     tokens_in: int
     tokens_out: int
+    cost_usd: float
+    intuitive_reliable: bool
+    repairs: int
+    max_repairs: int
 
 
 class Agent(ABC):
@@ -49,6 +53,8 @@ class Agent(ABC):
     grounded: bool = True
     #: one-line description shown in `crt agents`
     blurb: str = ""
+    #: how many times the parser may be re-prompted with the solver's rejection
+    max_repairs: int = 0
 
     def __init__(
         self,
@@ -63,6 +69,11 @@ class Agent(ABC):
     def build_graph(self) -> Any:
         """Return an uncompiled `StateGraph`."""
 
+    @property
+    def samples_unreflectively(self) -> bool:
+        """Whether this agent's backend can produce a genuine System 1 answer."""
+        return bool(getattr(self.provider, "supports_unreflective_sampling", True))
+
     def answer(self, item: Item) -> Answer:
         started = time.perf_counter()
         state: AgentState = {
@@ -76,6 +87,10 @@ class Agent(ABC):
             "error": None,
             "tokens_in": 0,
             "tokens_out": 0,
+            "cost_usd": 0.0,
+            "intuitive_reliable": True,
+            "repairs": 0,
+            "max_repairs": self.max_repairs,
         }
 
         with self.tracer.span(
@@ -104,8 +119,10 @@ class Agent(ABC):
             trace=trace,
             audit=audit(trace, final.get("value"), grounded=self.grounded),
             intuitive_value=final.get("intuitive_value"),
+            intuitive_reliable=bool(final.get("intuitive_reliable", True)),
             conflict_detected=bool(final.get("conflict")),
             latency_ms=(time.perf_counter() - started) * 1000,
             tokens_in=int(final.get("tokens_in") or 0),
             tokens_out=int(final.get("tokens_out") or 0),
+            cost_usd=float(final.get("cost_usd") or 0.0),
         )

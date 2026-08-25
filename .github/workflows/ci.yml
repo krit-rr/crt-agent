@@ -68,3 +68,5 @@ jobs:
       - run: pip install -e .
       - name: Full offline benchmark sweep
         run: crt bench --perturbed 10 --novel 4 --failures 4
+      - name: Cross-model sweep (mock backend, exercises the matrix path)
+        run: crt bench --model mock-a --model mock-b --perturbed 2 --novel 1 --concurrency 4

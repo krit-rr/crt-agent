@@ -110,6 +110,9 @@ class LLMResponse:
     text: str = ""
     tokens_in: int = 0
     tokens_out: int = 0
+    #: Real spend for this call when the backend reports it (the CLI path does).
+    #: Zero means "not reported", not "free".
+    cost_usd: float = 0.0
     raw: dict[str, Any] = field(default_factory=dict)
 
     def as_spec(self) -> ProblemSpec:
@@ -120,6 +123,14 @@ class LLMResponse:
 @runtime_checkable
 class LLMProvider(Protocol):
     name: str
+
+    #: Can this backend return a genuinely unreflective answer?
+    #:
+    #: The dual-process arm needs one to measure System 1 at all. Backends that
+    #: always deliberate before replying (notably the `claude -p` harness) set this
+    #: False, and the report prints n/a for those columns rather than a number that
+    #: looks like a System 1 measurement but isn't.
+    supports_unreflective_sampling: bool
 
     def call(
         self,
@@ -134,6 +145,8 @@ class LLMProvider(Protocol):
 
 class AnthropicProvider:
     """Real model calls with a forced tool choice."""
+
+    supports_unreflective_sampling = True
 
     def __init__(self, settings: Settings | None = None) -> None:
         from anthropic import Anthropic  # imported lazily so the mock path needs no SDK
@@ -181,11 +194,29 @@ class AnthropicProvider:
         )
 
 
-def build_provider(settings: Settings | None = None) -> LLMProvider:
-    """Pick a provider. Falls back to the mock when no API key is configured."""
+def build_provider(settings: Settings | None = None, model: str | None = None) -> LLMProvider:
+    """Pick a provider.
+
+    `model` overrides the configured model, which is what the cross-model sweep uses
+    to bind one provider instance per model.
+    """
     cfg = settings or default_settings
+
+    if cfg.llm_provider == "claude-cli":
+        from crt_agent.llm.claude_cli import ClaudeCLIProvider
+
+        return ClaudeCLIProvider(
+            model=model or cfg.model,
+            binary=cfg.claude_binary,
+            timeout_s=cfg.claude_timeout_s,
+            effort=cfg.claude_effort or None,
+        )
+
     if cfg.use_mock:
         from crt_agent.llm.mock import MockProvider
 
         return MockProvider()
+
+    if model:
+        cfg = cfg.model_copy(update={"model": model})
     return AnthropicProvider(cfg)

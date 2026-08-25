@@ -23,7 +23,9 @@ apart, which is the first thing anyone will ask you about the result.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 from crt_agent.agents.base import Agent
@@ -46,6 +48,9 @@ class Metrics:
     intuitive_n: int = 0
     latency_ms: float = 0.0
     tokens_out: int = 0
+    cost_usd: float = 0.0
+    #: attempts whose intuition step was a genuine unreflective sample
+    intuitive_reliable_n: int = 0
 
     @property
     def accuracy(self) -> float:
@@ -71,11 +76,29 @@ class Metrics:
 
     @property
     def override_rate(self) -> float:
-        return self.overrides / self.intuitive_n if self.intuitive_n else float("nan")
+        """How often the deliberate answer overruled the snap one.
+
+        Gated on the same condition as `system1_lure_rate`: if the "snap" answer was
+        itself deliberated, then a disagreement between the two is not an act of
+        reflection overriding intuition — it is two considered answers differing, which
+        is a different and much less interesting fact.
+        """
+        if not self.intuitive_reliable_n:
+            return float("nan")
+        return self.overrides / self.intuitive_reliable_n
 
     @property
     def system1_lure_rate(self) -> float:
-        return self.intuitive_lure / self.intuitive_n if self.intuitive_n else float("nan")
+        """How often the snap judgement took the bait.
+
+        Returns NaN when the backend could not sample unreflectively. The number would
+        otherwise be computable and meaningless: an answer the model deliberated over
+        is not a System 1 response, and printing it as one is the kind of quiet
+        category error that makes a benchmark untrustworthy.
+        """
+        if not self.intuitive_reliable_n:
+            return float("nan")
+        return self.intuitive_lure / self.intuitive_reliable_n
 
     @property
     def mean_latency_ms(self) -> float:
@@ -107,8 +130,11 @@ class SweepResult:
             if answer.audit and answer.audit.applicable:
                 m.audit_checked += 1
                 m.audit_valid += answer.audit.valid
+            m.cost_usd += answer.cost_usd
             if answer.intuitive_value is not None:
                 m.intuitive_n += 1
+                if answer.intuitive_reliable:
+                    m.intuitive_reliable_n += 1
                 m.intuitive_lure += item.is_lure(answer.intuitive_value)
                 m.overrides += answer.conflict_detected
         return m
@@ -152,20 +178,81 @@ class SweepResult:
         return []
 
 
+class BudgetExceeded(RuntimeError):
+    """Raised internally when a sweep hits its spend ceiling. Never escapes `run_sweep`."""
+
+
 def run_sweep(
     agents: Sequence[Agent],
     items: Iterable[Item],
     *,
     progress: Callable[[str], None] | None = None,
+    concurrency: int = 1,
+    max_cost_usd: float | None = None,
 ) -> SweepResult:
-    """Run every agent over every item. Errors are recorded, never raised."""
+    """Run every agent over every item. Errors are recorded, never raised.
+
+    `concurrency` matters for subprocess-backed providers, where a single call is
+    seconds of mostly-waiting: a full sweep against `claude -p` is over an hour
+    serially and minutes at 6-way.
+
+    `max_cost_usd` is a hard stop for backends that report spend. It is checked
+    *before* dispatching each attempt, so the ceiling can be overshot by at most the
+    in-flight batch — worth knowing if you set it close to a credit limit. When the
+    ceiling is hit the sweep stops early and returns what it has; partial results are
+    more useful than an exception, and the report shows the reduced `n`.
+    """
     items = list(items)
     result = SweepResult()
-    for agent in agents:
-        for index, item in enumerate(items, 1):
-            answer = agent.answer(item)
+    lock = threading.Lock()
+    spent = 0.0
+    stopped = False
+
+    def record(item: Item, answer: Answer) -> None:
+        nonlocal spent, stopped
+        with lock:
             result.add(item, answer)
-            if progress:
-                mark = "ok " if item.is_correct(answer.value) else "MISS"
-                progress(f"{agent.name:<9} {index:>3}/{len(items)}  {mark}  {item.item_id}")
+            spent += answer.cost_usd
+            if max_cost_usd is not None and spent >= max_cost_usd and not stopped:
+                stopped = True
+                if progress:
+                    progress(f"BUDGET  stopping: ${spent:.2f} >= ${max_cost_usd:.2f} ceiling")
+
+    for agent in agents:
+        pending = [i for i in items]
+        done = 0
+
+        def attempt(item: Item, agent: Agent = agent) -> tuple[Item, Answer] | None:
+            with lock:
+                if stopped:
+                    return None
+            return item, agent.answer(item)
+
+        if concurrency <= 1:
+            for item in pending:
+                got = attempt(item)
+                if got is None:
+                    break
+                record(*got)
+                done += 1
+                if progress:
+                    mark = "ok " if got[0].is_correct(got[1].value) else "MISS"
+                    progress(f"{agent.name:<9} {done:>3}/{len(items)}  {mark}  {item.item_id}")
+        else:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futures = {pool.submit(attempt, item): item for item in pending}
+                for future in as_completed(futures):
+                    got = future.result()
+                    if got is None:
+                        continue
+                    record(*got)
+                    done += 1
+                    if progress:
+                        mark = "ok " if got[0].is_correct(got[1].value) else "MISS"
+                        progress(
+                            f"{agent.name:<9} {done:>3}/{len(items)}  {mark}  {got[0].item_id}"
+                        )
+        if stopped:
+            break
+
     return result

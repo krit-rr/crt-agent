@@ -17,7 +17,13 @@ class Settings(BaseSettings):
     model: str = "claude-sonnet-4-5"
     max_tokens: int = 1200
     temperature: float = 0.0
-    llm_provider: str = "auto"  # auto | anthropic | mock
+    # auto | anthropic | claude-cli | mock
+    #   auto       -> anthropic if an API key is set, else mock
+    #   claude-cli -> `claude -p`, billed to your Pro/Max subscription (no API key)
+    llm_provider: str = "auto"
+    claude_binary: str = "claude"
+    claude_timeout_s: float = 180.0
+    claude_effort: str = ""
 
     # --- tracing -------------------------------------------------------------
     langfuse_public_key: str = ""
@@ -32,8 +38,8 @@ class Settings(BaseSettings):
 
     @property
     def use_mock(self) -> bool:
-        if self.llm_provider == "mock":
-            return True
+        if self.llm_provider in {"mock", "claude-cli"}:
+            return self.llm_provider == "mock"
         if self.llm_provider == "anthropic":
             return False
         return not self.anthropic_api_key

@@ -51,6 +51,7 @@ class MockProvider:
     """Offline provider. Same interface as `AnthropicProvider`."""
 
     name = "mock"
+    supports_unreflective_sampling = True
 
     #: fraction of items where the parser emits a well-formed spec of the WRONG problem
     misparse_rate: float = 0.08

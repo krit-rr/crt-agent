@@ -94,3 +94,111 @@ def test_agent_survives_a_provider_that_explodes(tracer, canonical):
     answer = ToolAgent(provider=Broken(), tracer=tracer).answer(canonical["bat_ball"])
     assert answer.value is None
     assert "upstream 500" in (answer.error or "")
+
+
+# -- the repair loop -------------------------------------------------------------------
+
+
+class _RepairProbe:
+    """Emits a broken spec first, then a good one, and records what it was shown."""
+
+    name = "probe"
+    supports_unreflective_sampling = True
+
+    BROKEN = {
+        "variables": [
+            {"name": "backlog", "description": "waitlist size"},
+            {"name": "net_rate", "description": "net reduction per day"},
+            {"name": "days", "description": "days until empty"},
+        ],
+        # `backlog` and `net_rate` are never bound to the numbers in the prose:
+        # exactly the failure Haiku produced on the drift family.
+        "equations": ["days * net_rate = backlog"],
+        "query": "days",
+    }
+    FIXED = {
+        "variables": [
+            {"name": "net_rate", "description": "net reduction per day"},
+            {"name": "days", "description": "days until empty"},
+        ],
+        "equations": ["net_rate = 12 - 5", "days * net_rate = 210"],
+        "query": "days",
+    }
+
+    def __init__(self):
+        self.prompts: list[str] = []
+        self.systems: list[str] = []
+
+    def call(self, *, system, prompt, tool, **_):
+        from crt_agent.llm.client import LLMResponse
+
+        self.prompts.append(prompt)
+        self.systems.append(system)
+        payload = self.FIXED if len(self.prompts) > 1 else self.BROKEN
+        return LLMResponse(tool_name=tool["name"], arguments=payload)
+
+
+def _drift_item():
+    from crt_agent.items import novel_items
+
+    return next(i for i in novel_items(1) if i.family == "drift")
+
+
+def test_repair_turns_a_solver_rejection_into_an_answer(tracer):
+    probe = _RepairProbe()
+    answer = ToolAgent(provider=probe, tracer=tracer).answer(_drift_item())
+
+    assert len(probe.prompts) == 2, "one parse, one repair"
+    assert answer.value == pytest.approx(30.0)
+    assert not answer.abstained
+    assert answer.audit.valid, "the repaired spec must still audit cleanly"
+    assert answer.trace.last(StepKind.REPAIR) is not None
+
+
+def test_repair_is_shown_the_solver_error_and_its_own_equations(tracer):
+    probe = _RepairProbe()
+    ToolAgent(provider=probe, tracer=tracer).answer(_drift_item())
+
+    repair_prompt = probe.prompts[1]
+    assert "SOLVER ERROR" in repair_prompt
+    assert "under-determined" in repair_prompt or "does not determine" in repair_prompt
+    assert "days * net_rate = backlog" in repair_prompt
+
+
+def test_repair_never_sees_the_expected_answer(tracer):
+    """The loop may converge on solvable algebra, never on a target number.
+
+    If the expected answer leaked into the repair prompt the agent could search for
+    it, and the benchmark would be measuring curve-fitting to the label.
+    """
+    item = _drift_item()
+    probe = _RepairProbe()
+    ToolAgent(provider=probe, tracer=tracer).answer(item)
+
+    for text in probe.prompts + probe.systems:
+        assert str(item.answer) not in text
+        assert str(int(item.answer)) not in text.replace("210", "").replace("12", "")
+
+
+def test_repair_budget_is_finite(tracer):
+    """A parser that never recovers must abstain, not loop."""
+
+    class AlwaysBroken(_RepairProbe):
+        def call(self, *, system, prompt, tool, **_):
+            from crt_agent.llm.client import LLMResponse
+
+            self.prompts.append(prompt)
+            return LLMResponse(tool_name=tool["name"], arguments=self.BROKEN)
+
+    probe = AlwaysBroken()
+    answer = ToolAgent(provider=probe, tracer=tracer).answer(_drift_item())
+
+    assert len(probe.prompts) == 2, "initial parse plus exactly one repair"
+    assert answer.abstained and answer.value is None
+    assert answer.audit.valid, "an honest abstention still passes audit"
+
+
+def test_a_clean_parse_never_triggers_repair(provider, tracer, canonical):
+    """Repair costs a model call; it must only fire on an actual rejection."""
+    answer = ToolAgent(provider=provider, tracer=tracer).answer(canonical["bat_ball"])
+    assert answer.trace.last(StepKind.REPAIR) is None

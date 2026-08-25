@@ -155,3 +155,51 @@ def render_answer(item: Item, answer: Answer) -> str:
     lines.append(f"COST      {answer.latency_ms:.0f} ms, {answer.tokens_out} output tokens")
     lines.append("")
     return "\n".join(lines)
+
+
+def matrix_table(matrix) -> str:
+    """Models x arms grid, with the grounding delta as the headline column.
+
+    Read this table down a column, not across a row: what matters is how the gap
+    between the tool arm and the ablation arm changes as the model gets stronger.
+    """
+    agents = matrix.agents()
+    lines = [
+        "",
+        "MODELS x ARMS  —  accuracy over all items",
+        "-" * 82,
+        f"{'model':<22} " + " ".join(f"{a:>10}" for a in agents) + f"{'grounding':>12}",
+        "-" * 82,
+    ]
+    for model in matrix.models:
+        cells = " ".join(f"{_pct(matrix.metrics(model, a).accuracy):>10}" for a in agents)
+        lines.append(f"{model:<22} {cells}{_pct(matrix.grounding_delta(model)):>12}")
+
+    lines += [
+        "",
+        f"{'model':<22} {'cost':>10} {'out tok':>10} {'ms/item':>10} {'abstain':>10}",
+        "-" * 82,
+    ]
+    for model in matrix.models:
+        per_model = [matrix.metrics(model, a) for a in agents]
+        cost = sum(m.cost_usd for m in per_model)
+        tokens = sum(m.tokens_out for m in per_model)
+        n = sum(m.n for m in per_model) or 1
+        latency = sum(m.latency_ms for m in per_model) / n
+        abstain = sum(m.abstained for m in per_model) / n
+        lines.append(
+            f"{model:<22} {'$' + format(cost, '.2f'):>10} {tokens:>10} "
+            f"{latency:>10.0f} {_pct(abstain):>10}"
+        )
+
+    lines += [
+        "",
+        "  grounding = accuracy(tool) - accuracy(ablation), for that model.",
+        "              This is the number the whole benchmark exists to produce.",
+        "              Expect it to be large on weak models and to shrink toward zero",
+        "              as models get strong enough to solve CRT items unaided — at which",
+        "              point the benchmark has saturated and stops measuring anything.",
+        f"  total cost: ${matrix.total_cost():.2f}",
+        "",
+    ]
+    return "\n".join(lines)
