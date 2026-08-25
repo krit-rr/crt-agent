@@ -1,0 +1,90 @@
+# Self-hosted LangFuse + Postgres for local benchmark runs.
+#
+#   docker compose up -d
+#   open http://localhost:3000, create a project, copy the keys into .env
+#   crt bench --store
+#
+# `crt_db` is where this repo's own benchmark tables live (separate database, same
+# server) so wiping LangFuse never takes your results with it.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crt
+      POSTGRES_PASSWORD: crt
+      POSTGRES_DB: langfuse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crt"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DB: default
+    volumes:
+      - chdata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  langfuse:
+    image: langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://crt:crt@postgres:5432/langfuse
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: change-me-in-any-real-deployment
+      SALT: change-me-too
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      TELEMETRY_ENABLED: "false"
+
+volumes:
+  pgdata:
+  chdata:
+  miniodata:
