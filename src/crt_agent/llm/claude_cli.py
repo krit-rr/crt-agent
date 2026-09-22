@@ -39,7 +39,11 @@ import subprocess
 import time
 from typing import Any
 
+from crt_agent.config import Settings
 from crt_agent.llm.client import LLMResponse
+from crt_agent.llm.json_contract import contract_prompt as _contract_prompt
+from crt_agent.llm.json_contract import extract_json as _extract_json
+from crt_agent.llm.registry import register_provider
 
 #: Tools Claude Code must not touch. The model is here to emit JSON, not to act.
 _DENIED_TOOLS = "Bash Edit Write Read Glob Grep WebSearch WebFetch Task NotebookEdit TodoWrite"
@@ -50,53 +54,13 @@ class ClaudeCLIError(RuntimeError):
 
 
 def contract_prompt(system: str, tool: dict[str, Any]) -> str:
-    """Render a tool's `input_schema` into a JSON-output contract.
-
-    The tool definitions in `llm/client.py` stay the single source of truth for both
-    backends: the API path passes them to `tools=[...]`, and this path compiles the
-    same schema into prose. They cannot drift.
-    """
-    schema = json.dumps(tool["input_schema"], indent=2)
-    required = ", ".join(tool["input_schema"].get("required", []))
-    return (
-        f"{system}\n\n"
-        "OUTPUT CONTRACT\n"
-        "Reply with exactly ONE JSON object and nothing else. No preamble, no "
-        "explanation, no markdown fences.\n\n"
-        f"It must validate against this JSON Schema:\n{schema}\n\n"
-        f"Required fields: {required}\n"
-    )
+    """See `crt_agent.llm.json_contract` — shared with the OpenAI-compatible path."""
+    return _contract_prompt(system, tool)
 
 
 def extract_json(text: str) -> dict[str, Any]:
-    """Pull one JSON object out of a model reply.
-
-    Models fence their JSON roughly half the time regardless of instructions, so this
-    strips fences and falls back to the outermost brace pair. It deliberately does not
-    try to repair malformed JSON — a broken reply should surface as an abstention, not
-    as a guess about what the model meant.
-    """
-    body = text.strip()
-    if body.startswith("```"):
-        body = body.split("\n", 1)[-1] if "\n" in body else body
-        if body.endswith("```"):
-            body = body[: body.rindex("```")]
-        body = body.strip()
-        if body.startswith("json"):
-            body = body[4:].strip()
-
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError:
-        pass
-
-    start, end = body.find("{"), body.rfind("}")
-    if start == -1 or end <= start:
-        raise ClaudeCLIError(f"no JSON object in reply: {text[:200]!r}")
-    try:
-        return json.loads(body[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise ClaudeCLIError(f"malformed JSON in reply: {exc}") from exc
+    """See `crt_agent.llm.json_contract`. Raises `ClaudeCLIError` on a bad reply."""
+    return _extract_json(text, error=ClaudeCLIError)
 
 
 class ClaudeCLIProvider:
@@ -226,3 +190,13 @@ class ClaudeCLIProvider:
             cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
             raw={"session_id": envelope.get("session_id"), "usage": usage},
         )
+
+
+@register_provider("claude-cli")
+def _claude_cli_factory(cfg: Settings, model: str | None) -> ClaudeCLIProvider:
+    return ClaudeCLIProvider(
+        model=model or cfg.model,
+        binary=cfg.claude_binary,
+        timeout_s=cfg.claude_timeout_s,
+        effort=cfg.claude_effort or None,
+    )

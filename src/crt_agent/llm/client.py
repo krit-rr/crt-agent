@@ -1,10 +1,14 @@
 """The model boundary.
 
-Two implementations satisfy one protocol:
+Several implementations satisfy one protocol (see `llm/registry.py`):
 
 * `AnthropicProvider` — the real thing, via the Anthropic SDK, using a forced tool
   call so the model's output arrives as JSON that matches our Pydantic schema
   instead of prose we have to regex.
+* `ClaudeCLIProvider` (see `crt_agent.llm.claude_cli`) — `claude -p` on a
+  subscription, JSON contract instead of forced tool use.
+* `OpenAICompatProvider` (see `crt_agent.llm.openai_compat`) — any OpenAI-compatible
+  endpoint, i.e. local models; the tier where the grounding delta is non-zero.
 * `MockProvider` (see `crt_agent.llm.mock`) — deterministic, offline, and used by
   the test suite and CI.
 
@@ -22,6 +26,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from crt_agent.config import Settings
 from crt_agent.config import settings as default_settings
+from crt_agent.llm.registry import build_provider, register_provider
 from crt_agent.schemas import ProblemSpec
 
 # --------------------------------------------------------------------------------------
@@ -194,29 +199,19 @@ class AnthropicProvider:
         )
 
 
-def build_provider(settings: Settings | None = None, model: str | None = None) -> LLMProvider:
-    """Pick a provider.
-
-    `model` overrides the configured model, which is what the cross-model sweep uses
-    to bind one provider instance per model.
-    """
-    cfg = settings or default_settings
-
-    if cfg.llm_provider == "claude-cli":
-        from crt_agent.llm.claude_cli import ClaudeCLIProvider
-
-        return ClaudeCLIProvider(
-            model=model or cfg.model,
-            binary=cfg.claude_binary,
-            timeout_s=cfg.claude_timeout_s,
-            effort=cfg.claude_effort or None,
-        )
-
-    if cfg.use_mock:
-        from crt_agent.llm.mock import MockProvider
-
-        return MockProvider()
-
+@register_provider("anthropic")
+def _anthropic_factory(cfg: Settings, model: str | None) -> LLMProvider:
     if model:
         cfg = cfg.model_copy(update={"model": model})
     return AnthropicProvider(cfg)
+
+
+__all__ = [
+    "DIRECT_TOOL",
+    "FORMALISE_TOOL",
+    "INTUIT_TOOL",
+    "AnthropicProvider",
+    "LLMProvider",
+    "LLMResponse",
+    "build_provider",
+]

@@ -17,13 +17,18 @@ class Settings(BaseSettings):
     model: str = "claude-sonnet-4-5"
     max_tokens: int = 1200
     temperature: float = 0.0
-    # auto | anthropic | claude-cli | mock
-    #   auto       -> anthropic if an API key is set, else mock
-    #   claude-cli -> `claude -p`, billed to your Pro/Max subscription (no API key)
+    # auto | anthropic | claude-cli | openai-compat | mock  (see llm/registry.py)
+    #   auto          -> anthropic if an API key is set, else mock
+    #   claude-cli    -> `claude -p`, billed to your Pro/Max subscription (no API key)
+    #   openai-compat -> any OpenAI-compatible endpoint; the local-model route
     llm_provider: str = "auto"
     claude_binary: str = "claude"
     claude_timeout_s: float = 180.0
     claude_effort: str = ""
+    # OpenAI-compatible endpoint (Ollama default). The key is optional for local servers.
+    openai_base_url: str = "http://localhost:11434/v1"
+    openai_api_key: str = ""
+    openai_timeout_s: float = 180.0
 
     # --- tracing -------------------------------------------------------------
     langfuse_public_key: str = ""
@@ -35,14 +40,6 @@ class Settings(BaseSettings):
 
     # --- benchmark -----------------------------------------------------------
     seed: int = 20260825
-
-    @property
-    def use_mock(self) -> bool:
-        if self.llm_provider in {"mock", "claude-cli"}:
-            return self.llm_provider == "mock"
-        if self.llm_provider == "anthropic":
-            return False
-        return not self.anthropic_api_key
 
     @property
     def tracing_enabled(self) -> bool:

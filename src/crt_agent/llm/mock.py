@@ -25,8 +25,10 @@ import hashlib
 from typing import Any
 
 from crt_agent.agents.matcher import match_spec
+from crt_agent.config import Settings
 from crt_agent.items.templates import TEMPLATES
 from crt_agent.llm.client import LLMResponse
+from crt_agent.llm.registry import register_provider
 
 
 def _bucket(text: str, salt: str) -> float:
@@ -160,3 +162,8 @@ class MockProvider:
             return None
         family, params = got
         return float(TEMPLATES[family].answer(params))
+
+
+@register_provider("mock")
+def _mock_factory(cfg: Settings, model: str | None) -> MockProvider:
+    return MockProvider()

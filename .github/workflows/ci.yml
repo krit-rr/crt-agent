@@ -26,9 +26,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check src tests
       - run: ruff format --check src tests
-      # No ANTHROPIC_API_KEY is set, so the suite runs against the mock provider.
-      # That is the point: every graph, the auditor, the metrics and the store are
-      # exercised on every push without spending a token or hitting the network.
+      # Suite runs against the mock provider to avoid spending a token or hitting the network
       - run: pytest --cov=crt_agent --cov-report=term-missing
 
   postgres:

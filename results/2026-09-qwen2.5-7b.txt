@@ -1,0 +1,69 @@
+ACCURACY BY ITEM SET                              
+GAP vs CANONICAL
+----------------------------------------------------------------------------------
+agent       canonical   surface  perturbed    novel   wording   number   abstain
+n =                 3        15         30       12
+----------------------------------------------------------------------------------
+symbolic       100.0%    100.0%     100.0%   100.0%      0.0%     0.0%      0.0%
+tool            66.7%     60.0%      56.7%    91.7%      6.7%    10.0%     28.3%
+dual           100.0%     86.7%      60.0%    91.7%     13.3%    40.0%     10.0%
+ablation       100.0%    100.0%      76.7%    41.7%      0.0%    23.3%      0.0%
+
+FAILURE STRUCTURE AND TRACE INTEGRITY  (all items)
+----------------------------------------------------------------------------------
+agent       accuracy  lure rate  audit ok   S1 lure  override   ms/item
+----------------------------------------------------------------------------------
+symbolic      100.0%       0.0%    100.0%       -         -          13
+tool           65.0%       5.0%    100.0%       -         -        8084
+dual           75.0%       5.0%    100.0%     10.2%     39.0%      9388
+ablation       76.7%       8.3%       -         -         -        3753
+
+  surface   = canonical numbers, different nouns  -> same correct answer.
+  perturbed = canonical structure, different numbers.
+  wording   = canonical - surface.   High: it was keyed to the famous phrasing.
+  number    = canonical - perturbed. High: it was reciting the famous answer.
+              Both near zero is the only result that supports 'it reasons'.
+  lure rate = answered with the item's designed wrong answer, not a random one.
+  audit ok  = share of answers reconstructable from their own trace
+              ('-' means the arm has no solver to audit, i.e. the control).
+  S1 lure   = how often the snap judgement took the bait (dual-process only).
+  override  = how often the derived answer overruled the snap one.
+
+  NOTE: only 3 canonical items exist (there are only three
+        famous CRT wordings), so both gap columns carry wide error bars.
+        Treat them as directional, not as point estimates.
+
+MISSES
+------------------------------------------------------------------------------
+[tool] lily_pad:canonical:0  (abstain)
+  In a lake there is a patch of lily pads. Every day, the patch of lily pads doubles in size. If it takes 48 days for the patch of lily pads to cover the entire lake, how many days would it take to cover half of the lake?
+  expected 47.0   got None   lure 24.0
+  equations: ['days_to_full_coverage = 48', '2 * lily_pads_half = lily_pads_full', 'lily_pads_half / lily_pads_full = 0.5', 'days_to_half_coverage + 1 = days_to_full_coverage']
+  error: solver: equation '2 * lily_pads_half = lily_pads_full' uses undeclared symbols: ['lily_pads_full', 'lily_pads_half']
+
+[tool] widgets:surface:1  (abstain)
+  If 5 printers take 5 minutes to make 5 posters, how many minutes would it take 100 printers to make 100 posters?
+  expected 5.0   got None   lure 100.0
+  error: invalid formalisation: 1 schema violation(s)
+
+[tool] widgets:surface:0  (abstain)
+  If 5 bakers take 5 minutes to make 5 buns, how many minutes would it take 100 bakers to make 100 buns?
+  expected 5.0   got None   lure 100.0
+  equations: ['5 / 5 = 5 / buns', '5 / 5 = bakers / 100', 'buns / 5 = 100 / 5']
+  error: solver: system has no solution
+
+[tool] widgets:surface:2  (abstain)
+  If 5 nurses take 5 minutes to make 5 screenings, how many minutes would it take 100 nurses to make 100 screenings?
+  expected 5.0   got None   lure 100.0
+  error: invalid formalisation: 1 schema violation(s)
+
+[tool] widgets:surface:3  (abstain)
+  If 5 scanners take 5 minutes to make 5 pages, how many minutes would it take 100 scanners to make 100 pages?
+  expected 5.0   got None   lure 100.0
+  error: invalid formalisation: 1 schema violation(s)
+
+[tool] lily_pad:surface:1  (abstain)
+  In a reservoir there is a patch of algae. Every day, the patch of algae doubles in size. If it takes 48 days for the patch of algae to cover the entire reservoir, how many days would it take to cover half of the reservoir?
+  expected 47.0   got None   lure 24.0
+  equations: ['days_to_cover_half = total_days - 1']
+  error: solver: 'days_to_cover_half' is under-determined: total_days - 1
