@@ -218,7 +218,7 @@ Same model, no equations, no derivation, and the answer is the lure: $4.20 − $
 ### Benchmark Discriminates
 A 60-item sweep on `qwen2.5:7b` via Ollama (`LLM_PROVIDER=openai-compat`), September 2026. 
 Only the model changed, everything else remained the same (items, arms, solver as Haiku run below)
-​```
+```
 agent       canonical   surface  perturbed    novel   wording   number   abstain
 n =                 3        15         30       12
 symbolic       100.0%    100.0%     100.0%   100.0%      0.0%     0.0%      0.0%
