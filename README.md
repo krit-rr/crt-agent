@@ -230,7 +230,7 @@ agent       accuracy  lure rate  audit ok   S1 lure  override
 tool           65.0%       5.0%    100.0%       -         -
 dual           75.0%       5.0%    100.0%     10.2%     39.0%
 ablation       76.7%       8.3%       -         -         -
-​```
+```
 
 
 Three Findings.
