@@ -232,6 +232,7 @@ dual           75.0%       5.0%    100.0%     10.2%     39.0%
 ablation       76.7%       8.3%       -         -         -
 ​```
 
+
 Three Findings.
 
 **1. The unaided model is reciting, and the item design catches it.** Bare qwen scores
