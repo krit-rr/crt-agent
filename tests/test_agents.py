@@ -125,9 +125,7 @@ def test_spend_before_a_mid_graph_crash_is_still_counted(tracer, canonical):
             response.cost_usd = 0.25
             return response
 
-    answer = DualProcessAgent(provider=SpendThenDie(), tracer=tracer).answer(
-        canonical["bat_ball"]
-    )
+    answer = DualProcessAgent(provider=SpendThenDie(), tracer=tracer).answer(canonical["bat_ball"])
     assert answer.error is not None
     assert answer.cost_usd == pytest.approx(0.25), "the intuit call's spend must survive"
     assert answer.tokens_out > 0
