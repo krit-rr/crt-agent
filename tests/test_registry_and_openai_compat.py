@@ -146,6 +146,47 @@ def test_the_answer_has_no_field_on_this_backend_either():
     assert spec.query == "small"
 
 
+def test_a_transient_error_mentioning_tools_does_not_downgrade_for_good():
+    """Only an HTTP 4xx naming tools is the server's verdict on the capability; a
+    glitched call must surface as that item's error and leave the tool path alone."""
+
+    class FlakyThenFine(FakeServer):
+        def __init__(self):
+            super().__init__(tools_ok=True)
+            self.calls = 0
+
+        def __call__(self, url, headers, body):
+            self.calls += 1
+            if self.calls == 1:
+                raise OpenAICompatError("server glitched while emitting tool arguments")
+            return super().__call__(url, headers, body)
+
+    server = FlakyThenFine()
+    provider = _provider(server)
+    with pytest.raises(OpenAICompatError, match="glitched"):
+        provider.call(system="S", prompt="Q", tool=FORMALISE_TOOL)
+
+    resp = provider.call(system="S", prompt="Q", tool=FORMALISE_TOOL)
+    assert resp.as_spec().query == "small"
+    assert "tools" in server.requests[-1]["body"], "the forced-tool path must survive the glitch"
+
+
+def test_a_4xx_rejecting_tools_falls_back_to_the_contract():
+    class RejectsTools(FakeServer):
+        def __init__(self):
+            super().__init__(tools_ok=False)
+
+        def __call__(self, url, headers, body):
+            if "tools" in body:
+                raise OpenAICompatError("HTTP 400: this model does not support tools", status=400)
+            return super().__call__(url, headers, body)
+
+    server = RejectsTools()
+    resp = _provider(server).call(system="S", prompt="Q", tool=FORMALISE_TOOL)
+    assert resp.as_spec().query == "small"
+    assert "OUTPUT CONTRACT" in server.requests[-1]["body"]["messages"][0]["content"]
+
+
 def test_bearer_header_only_when_a_key_is_set():
     server = FakeServer(tools_ok=True)
     OpenAICompatProvider("m", transport=server).call(system="S", prompt="Q", tool=FORMALISE_TOOL)

@@ -56,14 +56,21 @@ def extract_json(text: str, *, error: type[Exception] = ContractError) -> dict[s
             body = body[4:].strip()
 
     try:
-        return json.loads(body)
+        parsed = json.loads(body)
     except json.JSONDecodeError:
-        pass
+        parsed = None
+    # A bare number or string is valid JSON but not an object; the contract promises
+    # a dict, so anything else must surface as a contract violation, not leak through.
+    if isinstance(parsed, dict):
+        return parsed
 
     start, end = body.find("{"), body.rfind("}")
     if start == -1 or end <= start:
         raise error(f"no JSON object in reply: {text[:200]!r}")
     try:
-        return json.loads(body[start : end + 1])
+        parsed = json.loads(body[start : end + 1])
     except json.JSONDecodeError as exc:
         raise error(f"malformed JSON in reply: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise error(f"reply was JSON but not an object: {text[:200]!r}")
+    return parsed

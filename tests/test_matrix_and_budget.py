@@ -198,6 +198,26 @@ def test_matrix_budget_drops_later_models_rather_than_half_measuring_all():
     assert "c" not in result.models, "the ceiling should cut the tail, not thin every model"
 
 
+def test_mixed_reliability_cannot_push_the_rates_past_one():
+    """When one 'dual' agent samples unreflectively and a same-named one does not
+    (two providers in one sweep), lure and override counts must only accumulate
+    from the reliable samples their denominator counts."""
+    from crt_agent.bench.runner import SweepResult
+
+    reliable = run_sweep(
+        [build(DualProcessAgent, CostedProvider(unreflective=True))], canonical_items()
+    )
+    unreliable = run_sweep(
+        [build(DualProcessAgent, CostedProvider(unreflective=False))], canonical_items()
+    )
+    merged = SweepResult(rows=reliable.rows + unreliable.rows)
+    m = merged.metrics("dual")
+    assert m.intuitive_n == 6
+    assert m.intuitive_reliable_n == 3
+    assert m.system1_lure_rate <= 1.0
+    assert m.override_rate <= 1.0
+
+
 def test_override_rate_is_gated_on_the_same_condition_as_system1_lure():
     """Two deliberate answers differing is not System 2 overriding System 1."""
     unreflective = run_sweep(

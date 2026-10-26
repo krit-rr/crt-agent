@@ -81,6 +81,17 @@ def test_surface_variants_are_distinct_from_each_other():
     assert len({i.text for i in items}) == len(items)
 
 
+def test_surface_items_raise_rather_than_silently_underfilling():
+    """A half-sized, family-skewed set would silently distort the wording gap."""
+    with pytest.raises(RuntimeError, match="surface variants"):
+        surface_items(50)
+
+
+def test_default_suite_delivers_the_surface_items_it_asks_for():
+    surface = [i for i in default_suite(10, 4) if i.item_set == "surface"]
+    assert len(surface) == 10 * len(CLASSIC_FAMILIES)
+
+
 def test_perturbed_items_actually_change_the_answer():
     canonical = {i.family: i for i in canonical_items()}
     changed = sum(abs(i.answer - canonical[i.family].answer) > 1e-9 for i in perturbed_items(10))

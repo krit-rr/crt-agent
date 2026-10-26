@@ -68,20 +68,40 @@ def intuit_node(provider: LLMProvider) -> Any:
 
     def run(state: AgentState) -> AgentState:
         t0 = time.perf_counter()
-        response = provider.call(
-            system=INTUIT_SYSTEM,
-            prompt=state["question"],
-            tool=INTUIT_TOOL,
-            max_tokens=200,
-            temperature=1.0,
-        )
-        value = float(response.arguments["value"])
         reliable = bool(getattr(provider, "supports_unreflective_sampling", True))
-        state["intuitive_value"] = value
         state["intuitive_reliable"] = reliable
-        state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
-        state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
-        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
+        try:
+            response = provider.call(
+                system=INTUIT_SYSTEM,
+                prompt=state["question"],
+                tool=INTUIT_TOOL,
+                max_tokens=200,
+                temperature=1.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - the probe is optional; it must not kill the item
+            state["intuitive_value"] = None
+            state["trace"].add(
+                StepKind.INTUIT,
+                "intuit",
+                rationale=f"snap judgement unavailable: {type(exc).__name__}: {exc}",
+                payload={"value": None, "unreflective": reliable},
+                started=t0,
+            )
+            return state
+        state["usage"].add(response)
+        try:
+            value = float(response.arguments["value"])
+        except (KeyError, TypeError, ValueError):
+            state["intuitive_value"] = None
+            state["trace"].add(
+                StepKind.INTUIT,
+                "intuit",
+                rationale=f"snap judgement reply had no numeric value: {response.arguments!r:.160}",
+                payload={"value": None, "unreflective": reliable},
+                started=t0,
+            )
+            return state
+        state["intuitive_value"] = value
         note = str(response.arguments.get("gut_feel", ""))[:200]
         if not reliable:
             note = (
@@ -110,9 +130,7 @@ def parse_node(provider: LLMProvider) -> Any:
             prompt=state["question"],
             tool=FORMALISE_TOOL,
         )
-        state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
-        state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
-        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
+        state["usage"].add(response)
 
         try:
             spec = response.as_spec()
@@ -197,6 +215,14 @@ def verify_node(state: AgentState) -> AgentState:
         state["error"] = "verification failed"
         state["abstained"] = True
         state["value"] = None
+        # Without this step the auditor cannot tell an honest refusal from a missing
+        # derivation, and scores the abstention INVALID like every other dangling run.
+        state["trace"].add(
+            StepKind.ABSTAIN,
+            "verify",
+            rationale=f"back-substitution failed, declining to answer: {result.residuals}",
+            started=t0,
+        )
     return state
 
 
@@ -236,9 +262,7 @@ def repair_node(provider: LLMProvider) -> Any:
         )
 
         response = provider.call(system=REPAIR_SYSTEM, prompt=prompt, tool=FORMALISE_TOOL)
-        state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
-        state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
-        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
+        state["usage"].add(response)
 
         try:
             spec = response.as_spec()
