@@ -63,6 +63,7 @@ class Repository:
                     lure=item.lure,
                     value=answer.value,
                     intuitive_value=answer.intuitive_value,
+                    intuitive_reliable=answer.intuitive_reliable,
                     correct=item.is_correct(answer.value),
                     hit_lure=item.is_lure(answer.value),
                     abstained=answer.abstained,
@@ -74,6 +75,7 @@ class Repository:
                     latency_ms=answer.latency_ms,
                     tokens_in=answer.tokens_in,
                     tokens_out=answer.tokens_out,
+                    cost_usd=answer.cost_usd,
                 )
                 attempt.steps = [
                     TraceStepRow(

@@ -96,6 +96,60 @@ def test_agent_survives_a_provider_that_explodes(tracer, canonical):
     assert "upstream 500" in (answer.error or "")
 
 
+def test_a_failed_snap_judgement_does_not_kill_the_deliberate_answer(tracer, canonical):
+    """The System 1 probe is optional instrumentation; its failure must not inflate
+    the dual arm's error rate for reasons unrelated to the architecture."""
+    from crt_agent.llm.mock import MockProvider
+
+    class JunkIntuit(MockProvider):
+        def call(self, *, system, prompt, tool, **kwargs):
+            if tool["name"] == "submit_snap_judgement":
+                raise RuntimeError("probe exploded")
+            return super().call(system=system, prompt=prompt, tool=tool, **kwargs)
+
+    answer = DualProcessAgent(provider=JunkIntuit(), tracer=tracer).answer(canonical["bat_ball"])
+    assert answer.intuitive_value is None
+    assert answer.error is None
+    assert answer.value == pytest.approx(0.05)
+
+
+def test_spend_before_a_mid_graph_crash_is_still_counted(tracer, canonical):
+    """The budget guard counts Answer.cost_usd; an errored item's spend was real."""
+    from crt_agent.llm.mock import MockProvider
+
+    class SpendThenDie(MockProvider):
+        def call(self, *, system, prompt, tool, **kwargs):
+            if tool["name"] == "submit_formalisation":
+                raise RuntimeError("boom after money was spent")
+            response = super().call(system=system, prompt=prompt, tool=tool, **kwargs)
+            response.cost_usd = 0.25
+            return response
+
+    answer = DualProcessAgent(provider=SpendThenDie(), tracer=tracer).answer(canonical["bat_ball"])
+    assert answer.error is not None
+    assert answer.cost_usd == pytest.approx(0.25), "the intuit call's spend must survive"
+    assert answer.tokens_out > 0
+
+
+def test_a_verification_failure_is_an_honest_abstention(tracer):
+    """Declining because back-substitution failed must audit VALID, like every other
+    abstention path — not count against trace integrity."""
+    from types import SimpleNamespace
+
+    from crt_agent.agents.nodes import verify_node
+    from crt_agent.schemas import Trace
+    from crt_agent.tracing.audit import audit
+
+    state = {
+        "trace": Trace(agent="tool", item_id="x"),
+        "solver": SimpleNamespace(verified=False, residuals={"small": 0.2}),
+        "value": 1.0,
+    }
+    state = verify_node(state)
+    assert state["abstained"] and state["value"] is None
+    assert audit(state["trace"], None).valid
+
+
 # -- the repair loop -------------------------------------------------------------------
 
 

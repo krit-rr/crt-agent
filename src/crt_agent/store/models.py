@@ -74,6 +74,7 @@ class Attempt(Base):
     lure: Mapped[float] = mapped_column(Float)
     value: Mapped[float | None] = mapped_column(Float, nullable=True)
     intuitive_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    intuitive_reliable: Mapped[bool] = mapped_column(Boolean, default=True)
 
     correct: Mapped[bool] = mapped_column(Boolean, index=True)
     hit_lure: Mapped[bool] = mapped_column(Boolean, index=True)
@@ -88,6 +89,7 @@ class Attempt(Base):
     latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
     run: Mapped[BenchmarkRun] = relationship(back_populates="attempts")
     steps: Mapped[list[TraceStepRow]] = relationship(

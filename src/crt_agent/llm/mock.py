@@ -86,8 +86,10 @@ class MockProvider:
     def _formalise(self, prompt: str) -> dict[str, Any]:
         matched = match_spec(prompt)
         if matched is None:
-            # An unrecognised phrasing: emit a spec that will fail validation the way
-            # a confused parser would, rather than silently inventing one.
+            # An unrecognised phrasing: emit a schema-valid but vacuous spec. The
+            # solver rejects it as under-determined, so it surfaces as an abstention
+            # the way a confused parser's output would, rather than as an invented
+            # answer.
             return {
                 "variables": [{"name": "answer", "description": "the requested quantity"}],
                 "equations": ["answer = answer"],

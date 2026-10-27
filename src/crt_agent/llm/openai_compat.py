@@ -41,6 +41,11 @@ Transport = Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]
 class OpenAICompatError(RuntimeError):
     """The endpoint failed or returned something unparseable."""
 
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        #: HTTP status code, when the failure was an HTTP error response.
+        self.status = status
+
 
 def _urllib_transport(timeout_s: float) -> Transport:
     def send(url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
@@ -52,7 +57,7 @@ def _urllib_transport(timeout_s: float) -> Transport:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:300]
-            raise OpenAICompatError(f"HTTP {exc.code}: {detail}") from exc
+            raise OpenAICompatError(f"HTTP {exc.code}: {detail}", status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise OpenAICompatError(
                 f"could not reach {url}: {exc.reason}. Is the server running?"
@@ -152,7 +157,16 @@ class OpenAICompatProvider:
                     self._tools_supported = True
                     return self._response(data, tool, arguments)
             except OpenAICompatError as exc:
-                if self._tools_supported is True or "tool" not in str(exc).lower():
+                # Only an HTTP 4xx whose body mentions tools is the server saying it
+                # does not support them. Anything else — a transport failure, a
+                # glitched tool-call JSON — is this call's error, not a verdict on
+                # the capability, and must not downgrade the sweep for good.
+                rejected_tools = (
+                    exc.status is not None
+                    and 400 <= exc.status < 500
+                    and "tool" in str(exc).lower()
+                )
+                if self._tools_supported is True or not rejected_tools:
                     raise
             # Server ignored or rejected tools: remember, and fall through to the contract.
             self._tools_supported = False

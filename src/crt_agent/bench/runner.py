@@ -133,10 +133,13 @@ class SweepResult:
             m.cost_usd += answer.cost_usd
             if answer.intuitive_value is not None:
                 m.intuitive_n += 1
+                # Lure and override counts share the reliable-only denominator, so
+                # they must only accumulate from reliable samples; mixing in
+                # deliberated answers can push the rates past 1.0.
                 if answer.intuitive_reliable:
                     m.intuitive_reliable_n += 1
-                m.intuitive_lure += item.is_lure(answer.intuitive_value)
-                m.overrides += answer.conflict_detected
+                    m.intuitive_lure += item.is_lure(answer.intuitive_value)
+                    m.overrides += answer.conflict_detected
         return m
 
     def _gap(self, agent: str, against: ItemSet) -> float:

@@ -37,9 +37,7 @@ def direct_node(provider: Any) -> Any:
             tool=DIRECT_TOOL,
         )
         state["value"] = float(response.arguments["value"])
-        state["tokens_in"] = state.get("tokens_in", 0) + response.tokens_in
-        state["tokens_out"] = state.get("tokens_out", 0) + response.tokens_out
-        state["cost_usd"] = state.get("cost_usd", 0.0) + response.cost_usd
+        state["usage"].add(response)
         state["trace"].add(
             StepKind.DIRECT,
             "direct",

@@ -46,7 +46,12 @@ def _build(family: ItemFamily, params: dict, item_set: ItemSet, suffix: str) -> 
 
 
 def canonical_items() -> list[Item]:
-    """The famous three, verbatim, plus the canonical form of our own families."""
+    """The famous three, verbatim.
+
+    The novel families' canonical forms live in `novel_items` (as each family's
+    item 0) under `item_set="novel"` — they have no recallable wording, which is
+    what this set exists to isolate.
+    """
     out = []
     for family in CLASSIC_FAMILIES:
         out.append(_build(family, TEMPLATES[family].canonical, "canonical", "0"))
@@ -98,6 +103,11 @@ def surface_items(
                 raise RuntimeError(f"{family}: surface variant changed the answer")
             out.append(item)
             made += 1
+        if made < n_per_family:
+            raise RuntimeError(
+                f"{family}: only {made} distinct surface variants exist for a request "
+                f"of {n_per_family}; the noun pool in templates.py needs more entries"
+            )
     return out
 
 

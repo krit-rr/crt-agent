@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
 from crt_agent.llm.client import LLMProvider, build_provider
@@ -18,12 +19,32 @@ from crt_agent.tracing.audit import audit
 from crt_agent.tracing.langfuse_client import Tracer, get_tracer
 
 
+@dataclass
+class Usage:
+    """Token and spend tally, mutated in place by the nodes like `trace`.
+
+    It has to be a shared object rather than scalar state keys: LangGraph copies the
+    input dict into channels, so counters written as plain state entries are lost
+    when the graph raises mid-item — and the budget guard would then undercount every
+    errored item's real spend.
+    """
+
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+
+    def add(self, response: Any) -> None:
+        self.tokens_in += response.tokens_in
+        self.tokens_out += response.tokens_out
+        self.cost_usd += response.cost_usd
+
+
 class AgentState(TypedDict, total=False):
     """The value that flows through every graph.
 
-    `trace` is mutated in place by the nodes. LangGraph is happy with that because
-    we never fan out in parallel; if these graphs ever gain concurrent branches the
-    trace needs a reducer instead.
+    `trace` and `usage` are mutated in place by the nodes. LangGraph is happy with
+    that because we never fan out in parallel; if these graphs ever gain concurrent
+    branches they need reducers instead.
     """
 
     item_id: str
@@ -36,9 +57,7 @@ class AgentState(TypedDict, total=False):
     conflict: bool
     abstained: bool
     error: str | None
-    tokens_in: int
-    tokens_out: int
-    cost_usd: float
+    usage: Usage
     intuitive_reliable: bool
     repairs: int
     max_repairs: int
@@ -85,9 +104,7 @@ class Agent(ABC):
             "conflict": False,
             "abstained": False,
             "error": None,
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "cost_usd": 0.0,
+            "usage": Usage(),
             "intuitive_reliable": True,
             "repairs": 0,
             "max_repairs": self.max_repairs,
@@ -107,6 +124,7 @@ class Agent(ABC):
 
         trace = final["trace"]
         solver = final.get("solver")
+        usage = final["usage"]
         return Answer(
             agent=self.name,
             item_id=item.item_id,
@@ -122,7 +140,7 @@ class Agent(ABC):
             intuitive_reliable=bool(final.get("intuitive_reliable", True)),
             conflict_detected=bool(final.get("conflict")),
             latency_ms=(time.perf_counter() - started) * 1000,
-            tokens_in=int(final.get("tokens_in") or 0),
-            tokens_out=int(final.get("tokens_out") or 0),
-            cost_usd=float(final.get("cost_usd") or 0.0),
+            tokens_in=usage.tokens_in,
+            tokens_out=usage.tokens_out,
+            cost_usd=usage.cost_usd,
         )

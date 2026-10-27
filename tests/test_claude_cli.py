@@ -95,7 +95,21 @@ def test_extract_json_survives_the_ways_models_wrap_output(reply):
     assert extract_json(reply) == {"a": 1}
 
 
-@pytest.mark.parametrize("reply", ["no json here", "", "{unclosed", "{'single': 'quotes'}"])
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "no json here",
+        "",
+        "{unclosed",
+        "{'single': 'quotes'}",
+        # Valid JSON that is not an object must also be refused: the contract
+        # promises a dict, and a bare number leaking through becomes a crash
+        # downstream instead of a recorded abstention.
+        "0.10",
+        '"just a string"',
+        "[1, 2, 3]",
+    ],
+)
 def test_extract_json_refuses_to_guess(reply):
     """A broken reply must become an abstention, not a repaired guess."""
     with pytest.raises(ClaudeCLIError):

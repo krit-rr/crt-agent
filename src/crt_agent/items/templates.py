@@ -95,6 +95,14 @@ def _sample_bat_ball(rng: random.Random) -> dict[str, Any]:
             ("desk", "lamp"),
             ("racket", "shuttlecock"),
             ("kettle", "mug"),
+            ("printer", "cartridge"),
+            ("couch", "cushion"),
+            ("telescope", "tripod"),
+            ("camera", "strap"),
+            ("guitar", "capo"),
+            ("drone", "battery"),
+            ("backpack", "keyring"),
+            ("monitor", "stand"),
         ]
     )
     diff = rng.randrange(50, 900) / 100  # 0.50 .. 8.99
@@ -152,6 +160,14 @@ def _sample_widgets(rng: random.Random) -> dict[str, Any]:
             ("nurse", "screening"),
             ("scanner", "page"),
             ("robot", "panel"),
+            ("courier", "parcel"),
+            ("welder", "bracket"),
+            ("potter", "bowl"),
+            ("clerk", "form"),
+            ("mason", "paver"),
+            ("sculptor", "figurine"),
+            ("weaver", "basket"),
+            ("stamper", "label"),
         ]
     )
     n = rng.randrange(3, 13)
@@ -203,6 +219,16 @@ def _sample_lily(rng: random.Random) -> dict[str, Any]:
             ("colony of mould", "petri dish"),
             ("bloom of duckweed", "pond"),
             ("cluster of ivy", "courtyard wall"),
+            ("patch of clover", "meadow"),
+            ("colony of lichen", "boulder"),
+            ("bloom of plankton", "tide pool"),
+            ("mat of moss", "rooftop"),
+            ("film of mildew", "shower wall"),
+            ("stand of bamboo", "garden"),
+            ("swath of kudzu", "hillside"),
+            ("carpet of fungus", "log pile"),
+            ("crust of coral", "shipwreck"),
+            ("sprawl of mint", "herb bed"),
         ]
     )
     D = rng.randrange(9, 61)

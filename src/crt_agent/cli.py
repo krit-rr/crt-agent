@@ -30,6 +30,7 @@ from crt_agent.items import (
 )
 from crt_agent.items.templates import TEMPLATES
 from crt_agent.llm.client import build_provider
+from crt_agent.llm.registry import resolve_provider_name
 from crt_agent.schemas import Item
 from crt_agent.store.repository import Repository
 from crt_agent.tracing.langfuse_client import get_tracer
@@ -115,6 +116,8 @@ def cmd_bench(args: argparse.Namespace) -> int:
         for model in matrix.models:
             print(f"\n### {model}")
             print(summary_table(matrix.sweeps[model]))
+            if args.failures:
+                print(failure_digest(matrix.sweeps[model], limit=args.failures))
         results = [(m, matrix.sweeps[m]) for m in matrix.models]
     else:
         agents = build_agents(models[0])
@@ -139,7 +142,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
         repo.create_schema()
         for model, result in results:
             run_id = repo.save_run(
-                provider=settings.llm_provider,
+                # The resolved backend, not the configured string — "auto" in the
+                # database says nothing about what actually ran.
+                provider=resolve_provider_name(settings),
                 model=model,
                 seed=settings.seed,
                 agents=args.agent,
